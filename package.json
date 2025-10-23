@@ -1,0 +1,37 @@
+{
+  "name": "feedd",
+  "version": "0.1.0",
+  "description": "Local documentation crawler with RAG and MCP server for Claude Code",
+  "type": "module",
+  "main": "./dist/cli.js",
+  "bin": {
+    "feedd": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js"
+  },
+  "keywords": ["documentation", "crawler", "rag", "mcp", "claude", "ai"],
+  "author": "",
+  "license": "MIT",
+  "packageManager": "pnpm@10.4.1",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.1",
+    "chalk": "^5.6.2",
+    "cheerio": "^1.1.2",
+    "chromadb": "^3.0.17",
+    "commander": "^14.0.1",
+    "crawlee": "^3.15.2",
+    "ollama": "^0.6.0",
+    "ora": "^9.0.0",
+    "playwright": "^1.56.1",
+    "turndown": "^7.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "@types/turndown": "^5.0.5",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
