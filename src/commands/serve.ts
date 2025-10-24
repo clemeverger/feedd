@@ -1,10 +1,14 @@
 import chalk from 'chalk';
+import { ensureChromaRunning } from '../chroma/manager.js';
 
 interface ServeOptions {
   port?: string;
 }
 
 export async function serveCommand(options: ServeOptions) {
+  // Vérifier que ChromaDB est accessible
+  await ensureChromaRunning();
+
   console.log(chalk.bold('\n🚀 Starting MCP Server\n'));
 
   try {

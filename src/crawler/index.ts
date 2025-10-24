@@ -1,4 +1,4 @@
-import { PlaywrightCrawler, ProxyConfiguration } from 'crawlee';
+import { PlaywrightCrawler } from 'crawlee';
 import TurndownService from 'turndown';
 import fs from 'fs/promises';
 import path from 'path';
@@ -104,8 +104,15 @@ source_id: ${source.id}
         // Enqueuer les liens pour continuer le crawl
         const currentDepth = (request.userData.depth as number) || 0;
         if (currentDepth < (source.maxDepth || 2)) {
+          // Normaliser l'URL de base (enlever le / final pour cohérence)
+          const normalizedBaseUrl = source.url.replace(/\/$/, '');
+
           await enqueueLinks({
-            strategy: 'same-domain',
+            // Filtrage natif par pattern d'URL
+            globs: [
+              normalizedBaseUrl,           // L'URL exacte de base
+              `${normalizedBaseUrl}/**`    // Tout sous cette URL
+            ],
 
             // Transformer les URLs avant de les enqueuer
             transformRequestFunction: (req) => {

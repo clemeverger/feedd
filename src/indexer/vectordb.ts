@@ -1,24 +1,47 @@
 import { ChromaClient, Collection } from 'chromadb';
-import path from 'path';
+import { DefaultEmbeddingFunction } from '@chroma-core/default-embed';
 import type { Chunk } from './chunker.js';
+import { getChromaURL } from '../chroma/manager.js';
 
 let client: ChromaClient | null = null;
+let embeddingFunction: DefaultEmbeddingFunction | null = null;
 
 export async function getChromaClient(): Promise<ChromaClient> {
   if (!client) {
-    const dbPath = path.join(process.cwd(), 'data', 'vectordb');
-    client = new ChromaClient({ path: dbPath });
+    // Se connecter au serveur ChromaDB local
+    const chromaUrl = new URL(getChromaURL());
+    client = new ChromaClient({
+      host: chromaUrl.hostname,
+      port: parseInt(chromaUrl.port, 10),
+      ssl: chromaUrl.protocol === 'https:',
+    });
   }
   return client;
 }
 
+export async function getEmbeddingFunction(): Promise<DefaultEmbeddingFunction> {
+  if (!embeddingFunction) {
+    // Initialiser avec le modèle par défaut (Xenova/all-MiniLM-L6-v2)
+    embeddingFunction = new DefaultEmbeddingFunction({
+      modelName: 'Xenova/all-MiniLM-L6-v2',
+    });
+
+    // Précharger le modèle en générant un embedding test
+    await embeddingFunction.generate(['test']);
+  }
+  return embeddingFunction;
+}
+
 export async function getOrCreateCollection(sourceId: string): Promise<Collection> {
   const client = await getChromaClient();
+  const embeddingFunction = await getEmbeddingFunction();
 
   try {
+    // Créer la collection avec l'embedding function par défaut
     return await client.getOrCreateCollection({
       name: sourceId,
-      metadata: { 'hnsw:space': 'cosine' }
+      metadata: { 'hnsw:space': 'cosine' },
+      embeddingFunction,
     });
   } catch (error: any) {
     throw new Error(`Failed to get or create collection: ${error.message}`);
@@ -27,39 +50,45 @@ export async function getOrCreateCollection(sourceId: string): Promise<Collectio
 
 export async function addChunksToCollection(
   collection: Collection,
-  chunks: Chunk[],
-  embeddings: number[][]
+  chunks: Chunk[]
 ): Promise<void> {
-  if (chunks.length !== embeddings.length) {
-    throw new Error('Chunks and embeddings arrays must have the same length');
-  }
-
   if (chunks.length === 0) {
     return;
   }
 
-  // ChromaDB nécessite des IDs uniques
-  const ids = chunks.map((_, idx) => `chunk_${Date.now()}_${idx}`);
-  const documents = chunks.map(chunk => chunk.content);
-  const metadatas = chunks.map(chunk => ({
-    source_id: chunk.metadata.source_id,
-    url: chunk.metadata.url,
-    title: chunk.metadata.title,
-    h1: chunk.metadata.h1 || '',
-    h2: chunk.metadata.h2 || '',
-    h3: chunk.metadata.h3 || '',
-    file_path: chunk.metadata.file_path
-  }));
+  // Ajouter les chunks par petits lots pour éviter les timeouts
+  const BATCH_SIZE = 10;
+  const totalBatches = Math.ceil(chunks.length / BATCH_SIZE);
 
-  try {
-    await collection.add({
-      ids,
-      embeddings,
-      documents,
-      metadatas
-    });
-  } catch (error: any) {
-    throw new Error(`Failed to add chunks to collection: ${error.message}`);
+  for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+    const batchChunks = chunks.slice(i, i + BATCH_SIZE);
+    const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+
+    // ChromaDB nécessite des IDs uniques
+    const timestamp = Date.now();
+    const ids = batchChunks.map((_, idx) => `chunk_${timestamp}_${i + idx}`);
+    const documents = batchChunks.map((chunk) => chunk.content);
+    const metadatas = batchChunks.map((chunk) => ({
+      source_id: chunk.metadata.source_id,
+      url: chunk.metadata.url,
+      title: chunk.metadata.title,
+      h1: chunk.metadata.h1 || '',
+      h2: chunk.metadata.h2 || '',
+      h3: chunk.metadata.h3 || '',
+      file_path: chunk.metadata.file_path,
+    }));
+
+    try {
+      // ChromaDB génère les embeddings automatiquement avec le modèle par défaut
+      await collection.add({
+        ids,
+        documents,
+        metadatas,
+      });
+      console.log(`  Indexed batch ${batchNumber}/${totalBatches} (${batchChunks.length} chunks)`);
+    } catch (error: any) {
+      throw new Error(`Failed to add chunks to collection (batch ${batchNumber}): ${error.message}`);
+    }
   }
 }
 
@@ -70,25 +99,38 @@ export async function deleteCollection(sourceId: string): Promise<void> {
     await client.deleteCollection({ name: sourceId });
   } catch (error: any) {
     // Ignorer l'erreur si la collection n'existe pas
-    if (!error.message.includes('does not exist')) {
+    const errorMessage = error.message?.toLowerCase() || '';
+    if (!errorMessage.includes('does not exist') &&
+        !errorMessage.includes('not found') &&
+        !errorMessage.includes('could not be found')) {
       throw new Error(`Failed to delete collection: ${error.message}`);
     }
+    // Sinon, on ignore silencieusement (la collection n'existait pas)
   }
 }
 
-export async function searchInCollection(
+/**
+ * Recherche par texte - ChromaDB génère l'embedding automatiquement avec le modèle par défaut
+ */
+export async function searchInCollectionByText(
   sourceId: string,
-  queryEmbedding: number[],
+  queryText: string,
   limit: number = 5
 ): Promise<any[]> {
   const client = await getChromaClient();
+  const embeddingFunction = await getEmbeddingFunction();
 
   try {
-    const collection = await client.getCollection({ name: sourceId });
+    // Récupérer la collection avec l'embedding function
+    const collection = await client.getCollection({
+      name: sourceId,
+      embeddingFunction,
+    });
 
+    // ChromaDB génère l'embedding de la query automatiquement
     const results = await collection.query({
-      queryEmbeddings: [queryEmbedding],
-      nResults: limit
+      queryTexts: [queryText],
+      nResults: limit,
     });
 
     // Formater les résultats
@@ -98,7 +140,7 @@ export async function searchInCollection(
         formatted.push({
           content: results.documents[0][i],
           metadata: results.metadatas?.[0]?.[i] || {},
-          distance: results.distances?.[0]?.[i] || 0
+          distance: results.distances?.[0]?.[i] || 0,
         });
       }
     }

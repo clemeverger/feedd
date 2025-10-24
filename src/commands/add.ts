@@ -1,14 +1,18 @@
 import chalk from 'chalk';
 import ora from 'ora';
+import inquirer from 'inquirer';
 import { addSource as addSourceToConfig, updateSource } from '../config.js';
+import { ensureChromaRunning } from '../chroma/manager.js';
 
 interface AddOptions {
-  name?: string;
   depth?: string;
   pages?: string;
 }
 
 export async function addCommand(url: string, options: AddOptions) {
+  // Vérifier que ChromaDB est accessible
+  await ensureChromaRunning();
+
   console.log(chalk.bold('\n🕷️  Adding documentation source\n'));
 
   // Valider l'URL
@@ -19,17 +23,53 @@ export async function addCommand(url: string, options: AddOptions) {
     process.exit(1);
   }
 
+  // Détecter si mode interactif nécessaire (aucune option fournie)
+  const isInteractive = !options.depth && !options.pages;
+
+  let finalOptions = options;
+
+  if (isInteractive) {
+    // Mode interactif avec inquirer
+    const answers = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'maxDepth',
+        message: 'Max crawl depth:',
+        default: '2',
+        validate: (input) => {
+          const num = parseInt(input);
+          return !isNaN(num) && num > 0 ? true : 'Please enter a valid positive number';
+        },
+      },
+      {
+        type: 'input',
+        name: 'maxPages',
+        message: 'Max pages to crawl:',
+        default: '100',
+        validate: (input) => {
+          const num = parseInt(input);
+          return !isNaN(num) && num > 0 ? true : 'Please enter a valid positive number';
+        },
+      },
+    ]);
+
+    // Construire les options finales depuis les réponses
+    finalOptions = {
+      depth: answers.maxDepth,
+      pages: answers.maxPages,
+    };
+  }
+
   let spinner = ora('Adding source to config...').start();
 
   try {
     // Ajouter à la config
     const source = await addSourceToConfig(url, {
-      name: options.name,
-      maxDepth: options.depth ? parseInt(options.depth) : undefined,
-      maxPages: options.pages ? parseInt(options.pages) : undefined,
+      maxDepth: finalOptions.depth ? parseInt(finalOptions.depth) : undefined,
+      maxPages: finalOptions.pages ? parseInt(finalOptions.pages) : undefined,
     });
 
-    spinner.succeed(chalk.green(`Added source: ${source.name}`));
+    spinner.succeed(chalk.green(`Added source: ${source.url}`));
     console.log(chalk.dim(`  ID: ${source.id}`));
     console.log(chalk.dim(`  URL: ${source.url}\n`));
 

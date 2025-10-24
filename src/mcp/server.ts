@@ -6,8 +6,7 @@ import {
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import { listSources, loadConfig } from '../config.js';
-import { generateEmbedding } from '../indexer/embedder.js';
-import { searchInCollection, listCollections } from '../indexer/vectordb.js';
+import { searchInCollectionByText, listCollections } from '../indexer/vectordb.js';
 import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
@@ -100,7 +99,6 @@ export async function startMCPServer(options: ServeOptions) {
                 text: JSON.stringify(
                   sources.map(s => ({
                     id: s.id,
-                    name: s.name,
                     url: s.url,
                     lastUpdated: s.lastUpdated,
                     docCount: s.docCount || 0,
@@ -121,26 +119,20 @@ export async function startMCPServer(options: ServeOptions) {
             throw new Error('Query parameter is required');
           }
 
-          // Charger la config pour obtenir le modèle
-          const config = await loadConfig();
-          const embeddingModel = config.embedding.model;
-
-          // Générer l'embedding de la query
-          const queryEmbedding = await generateEmbedding(query, embeddingModel);
-
           let results: any[] = [];
 
           if (source) {
             // Rechercher dans une source spécifique
-            results = await searchInCollection(source, queryEmbedding, limit);
+            // ChromaDB génère l'embedding automatiquement avec son modèle par défaut
+            results = await searchInCollectionByText(source, query, limit);
           } else {
             // Rechercher dans toutes les sources
             const collections = await listCollections();
 
             for (const collectionName of collections) {
-              const collectionResults = await searchInCollection(
+              const collectionResults = await searchInCollectionByText(
                 collectionName,
-                queryEmbedding,
+                query,
                 limit
               );
               results.push(...collectionResults);
@@ -234,7 +226,14 @@ export async function startMCPServer(options: ServeOptions) {
   console.error(chalk.dim('  - list_sources()'));
   console.error(chalk.dim('  - search_docs(query, source?, limit?)'));
   console.error(chalk.dim('  - get_doc(url)'));
-  console.error('');
+
+  // Instructions pour Claude Code
+  console.error(chalk.bold('\n📋 Add to Claude Code:'));
+  console.error(chalk.dim('\nRun this command to install the MCP server:\n'));
+  console.error(chalk.cyan('  claude mcp add --transport stdio feedd -- feedd serve'));
+  console.error(chalk.dim('\nOr for user-level (all projects):'));
+  console.error(chalk.cyan('  claude mcp add --transport stdio --scope user feedd -- feedd serve'));
+  console.error(chalk.dim('\nThen restart Claude Code and run /mcp to verify\n'));
 }
 
 async function getAllMarkdownFiles(dir: string): Promise<string[]> {

@@ -36,7 +36,7 @@ export async function removeCommand(id: string) {
       // Ignorer si la collection n'existe pas
     }
 
-    spinner.succeed(chalk.green(`Successfully removed "${source.name}"`));
+    spinner.succeed(chalk.green(`Successfully removed "${source.url}"`));
 
     console.log(chalk.dim(`\nSource ID: ${id}`));
     console.log(chalk.dim('All associated data has been deleted.'));

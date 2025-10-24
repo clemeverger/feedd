@@ -1,5 +1,18 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
+import { encoding_for_model } from 'tiktoken';
+
+// Initialiser l'encodeur tiktoken pour compter les tokens
+const encoder = encoding_for_model('gpt-4');
+
+/**
+ * Compte le nombre de tokens dans un texte
+ */
+function countTokens(text: string): number {
+  const tokens = encoder.encode(text);
+  return tokens.length;
+}
 
 export interface Chunk {
   content: string;
@@ -13,6 +26,24 @@ export interface Chunk {
     file_path: string;
   };
 }
+
+// Configuration du splitter (sera mise à jour dynamiquement)
+let textSplitter: RecursiveCharacterTextSplitter;
+
+/**
+ * Configure le chunker avec la taille max et l'overlap
+ */
+export function configureChunker(chunkSize: number, chunkOverlap: number): void {
+  textSplitter = new RecursiveCharacterTextSplitter({
+    chunkSize,
+    chunkOverlap,
+    lengthFunction: countTokens,
+    separators: ['\n\n', '\n', '. ', ' ', ''], // Paragraphes > lignes > phrases > mots
+  });
+}
+
+// Initialisation par défaut
+configureChunker(1800, 270);
 
 export async function chunkMarkdownFiles(sourceId: string, rawDir: string): Promise<Chunk[]> {
   const chunks: Chunk[] = [];
@@ -58,30 +89,28 @@ async function chunkMarkdownFile(content: string, filePath: string, sourceId: st
   // Parser le frontmatter
   const { frontmatter, markdown } = parseFrontmatter(content);
 
-  // Découper par sections (H2 et H3)
-  const sections = splitBySections(markdown);
+  // Construire les headers pour le contexte
+  const headers = [frontmatter.h1, frontmatter.h2, frontmatter.h3].filter(Boolean).join(' > ');
 
-  const chunks: Chunk[] = [];
+  // Préparer le texte avec headers (pour que LangChain en tienne compte)
+  const textToChunk = headers ? `${headers}\n\n${markdown}` : markdown;
 
-  for (const section of sections) {
-    // Ne pas créer de chunk vide
-    if (section.content.trim().length < 50) {
-      continue;
-    }
+  // Utiliser LangChain pour chunker intelligemment
+  const textChunks = await textSplitter.createDocuments([textToChunk]);
 
-    chunks.push({
-      content: section.content,
-      metadata: {
-        source_id: sourceId,
-        url: frontmatter.url || '',
-        title: frontmatter.title || '',
-        h1: frontmatter.h1 || section.h1,
-        h2: section.h2,
-        h3: section.h3,
-        file_path: filePath
-      }
-    });
-  }
+  // Convertir en notre format de Chunk avec metadata
+  const chunks: Chunk[] = textChunks.map((doc) => ({
+    content: doc.pageContent,
+    metadata: {
+      source_id: sourceId,
+      url: frontmatter.url || '',
+      title: frontmatter.title || '',
+      h1: frontmatter.h1,
+      h2: frontmatter.h2,
+      h3: frontmatter.h3,
+      file_path: filePath,
+    },
+  }));
 
   return chunks;
 }
@@ -111,57 +140,4 @@ function parseFrontmatter(content: string): { frontmatter: any; markdown: string
   }
 
   return { frontmatter, markdown };
-}
-
-interface Section {
-  content: string;
-  h1?: string;
-  h2?: string;
-  h3?: string;
-}
-
-function splitBySections(markdown: string): Section[] {
-  const lines = markdown.split('\n');
-  const sections: Section[] = [];
-
-  let currentH1: string | undefined;
-  let currentH2: string | undefined;
-  let currentH3: string | undefined;
-  let currentContent: string[] = [];
-
-  function flushSection() {
-    if (currentContent.length > 0) {
-      sections.push({
-        content: currentContent.join('\n').trim(),
-        h1: currentH1,
-        h2: currentH2,
-        h3: currentH3
-      });
-      currentContent = [];
-    }
-  }
-
-  for (const line of lines) {
-    // Détecter les headers
-    if (line.startsWith('# ')) {
-      flushSection();
-      currentH1 = line.replace(/^#\s+/, '').trim();
-      currentH2 = undefined;
-      currentH3 = undefined;
-    } else if (line.startsWith('## ')) {
-      flushSection();
-      currentH2 = line.replace(/^##\s+/, '').trim();
-      currentH3 = undefined;
-    } else if (line.startsWith('### ')) {
-      flushSection();
-      currentH3 = line.replace(/^###\s+/, '').trim();
-    } else {
-      currentContent.push(line);
-    }
-  }
-
-  // Flush dernier chunk
-  flushSection();
-
-  return sections;
 }

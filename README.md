@@ -21,6 +21,7 @@ Your AI doesn't guess anymore — it consults the exact docs from your stack.
 
 1. **Node.js** 18+ and **pnpm**
 2. **Ollama** - Download from [ollama.ai](https://ollama.ai)
+3. **ChromaDB** - Install via pip
 
 ### Install Feedd
 
@@ -32,12 +33,29 @@ pnpm build
 pnpm link --global
 ```
 
-### Setup Ollama
+### Setup Required Services
+
+#### 1. Install and Start ChromaDB
+
+```bash
+# Install ChromaDB
+pip install chromadb
+
+# Start ChromaDB server (keep this terminal open)
+chroma run --path ./data/vectordb
+```
+
+**Important:** ChromaDB must be running before using Feedd commands. Keep it running in a separate terminal.
+
+#### 2. Setup Ollama
 
 After installing Ollama, start it and pull the embedding model:
 
 ```bash
-ollama serve  # Start Ollama (run in a separate terminal)
+# Start Ollama (run in a separate terminal)
+ollama serve
+
+# Pull the embedding model
 ollama pull nomic-embed-text
 ```
 
@@ -50,6 +68,7 @@ feedd add https://react.dev/reference
 ```
 
 This will:
+
 - Crawl the React documentation
 - Generate embeddings
 - Store in local vector database
@@ -95,6 +114,7 @@ feedd add https://tailwindcss.com/docs --name "Tailwind CSS" --depth 3
 ```
 
 **Options:**
+
 - `-n, --name <name>` - Custom name for the source
 - `-d, --depth <number>` - Maximum crawl depth (default: 2)
 - `-p, --pages <number>` - Maximum pages to crawl (default: 100)
@@ -140,6 +160,7 @@ Feedd exposes 3 tools to Claude Code:
 Lists all indexed documentation sources.
 
 **Returns:**
+
 ```json
 [
   {
@@ -158,11 +179,13 @@ Lists all indexed documentation sources.
 Search documentation using vector similarity.
 
 **Parameters:**
+
 - `query` (string, required) - The search query
 - `source` (string, optional) - Filter by source ID
 - `limit` (number, optional) - Max results (default: 5)
 
 **Returns:**
+
 ```json
 [
   {
@@ -185,6 +208,7 @@ Search documentation using vector similarity.
 Retrieve the full Markdown content of a document.
 
 **Parameters:**
+
 - `url` (string, required) - The document URL
 
 **Returns:** Full Markdown content with frontmatter metadata.
@@ -254,6 +278,7 @@ Once Feedd is configured in Claude Code, you can ask:
 **User:** "How do I use useEffect with cleanup in React?"
 
 **Claude Code:**
+
 1. Calls `search_docs("useEffect cleanup")`
 2. Receives relevant chunks from the indexed React docs
 3. Answers based on the exact documentation

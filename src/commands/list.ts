@@ -17,9 +17,8 @@ export async function listCommand() {
       const statusColor = getStatusColor(source.status);
       const statusText = source.status.toUpperCase().padEnd(10);
 
-      console.log(chalk.bold(source.name));
+      console.log(chalk.bold(source.url));
       console.log(`  ${chalk.dim('ID:')}       ${source.id}`);
-      console.log(`  ${chalk.dim('URL:')}      ${source.url}`);
       console.log(`  ${chalk.dim('Status:')}   ${statusColor(statusText)}`);
 
       if (source.docCount) {
