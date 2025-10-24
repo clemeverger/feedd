@@ -31,7 +31,7 @@ export async function startMCPServer(options: ServeOptions) {
   // Tool 1: list_sources
   const listSourcesTool: Tool = {
     name: 'list_sources',
-    description: 'List all indexed documentation sources available in Feedd',
+    description: 'List all indexed documentation sources available in Feedd. Use this automatically when the user asks about available documentation, what sources are indexed, which libraries/frameworks/tools are available for search, or wants to know what documentation has been added to the system.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -42,21 +42,21 @@ export async function startMCPServer(options: ServeOptions) {
   // Tool 2: search_docs
   const searchDocsTool: Tool = {
     name: 'search_docs',
-    description: 'Search documentation using vector similarity. Returns relevant chunks from the indexed docs.',
+    description: 'Search documentation using vector similarity to find relevant information from indexed docs. Use this automatically whenever the user asks questions about programming concepts, API usage, library/framework features, syntax, best practices, code examples, error messages, or any technical question that could be answered by consulting documentation. This is your primary tool for retrieving accurate, up-to-date information from the indexed documentation sources.',
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'The search query',
+          description: 'The search query - can be a question, concept name, function name, or topic you want to search for in the documentation',
         },
         source: {
           type: 'string',
-          description: 'Optional: filter by source ID',
+          description: 'Optional: filter by source ID (e.g., "react-dev-reference"). Use this when the user specifically mentions a framework, library, or tool name to search only within that documentation. Leave empty to search across all indexed sources.',
         },
         limit: {
           type: 'number',
-          description: 'Maximum number of results to return (default: 5)',
+          description: 'Maximum number of results to return (default: 5). Increase this when the user needs comprehensive information or multiple examples.',
         },
       },
       required: ['query'],
@@ -66,13 +66,13 @@ export async function startMCPServer(options: ServeOptions) {
   // Tool 3: get_doc
   const getDocTool: Tool = {
     name: 'get_doc',
-    description: 'Retrieve the full Markdown content of a specific document by its URL',
+    description: 'Retrieve the full Markdown content of a specific documentation page by its URL. Use this when the user needs complete documentation page content (not just snippets), when they reference a specific URL from search results and want more details, or when search_docs results indicate that a full page view would be helpful. The full page often contains additional context, examples, and related information not present in search chunks.',
     inputSchema: {
       type: 'object',
       properties: {
         url: {
           type: 'string',
-          description: 'The URL of the document to retrieve',
+          description: 'The exact URL of the documentation page to retrieve (e.g., "https://react.dev/reference/react/useEffect"). This should typically come from the metadata of search_docs results.',
         },
       },
       required: ['url'],
