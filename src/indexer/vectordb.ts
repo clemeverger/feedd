@@ -164,3 +164,73 @@ export async function listCollections(): Promise<string[]> {
     throw new Error(`Failed to list collections: ${error.message}`);
   }
 }
+
+/**
+ * Récupère les statistiques d'une collection (nombre de documents)
+ */
+export async function getCollectionStats(sourceId: string): Promise<{ count: number }> {
+  const client = await getChromaClient();
+  const embeddingFunction = await getEmbeddingFunction();
+
+  try {
+    const collection = await client.getCollection({
+      name: sourceId,
+      embeddingFunction,
+    });
+
+    const count = await collection.count();
+    return { count };
+  } catch (error: any) {
+    if (error.message.includes('does not exist')) {
+      throw new Error(`Collection "${sourceId}" does not exist`);
+    }
+    throw new Error(`Failed to get collection stats: ${error.message}`);
+  }
+}
+
+/**
+ * Récupère les documents d'une collection avec pagination
+ */
+export async function getCollectionDocuments(
+  sourceId: string,
+  limit: number = 20,
+  offset: number = 0
+): Promise<any[]> {
+  const client = await getChromaClient();
+  const embeddingFunction = await getEmbeddingFunction();
+
+  try {
+    const collection = await client.getCollection({
+      name: sourceId,
+      embeddingFunction,
+    });
+
+    // ChromaDB's get() method doesn't support offset directly, so we fetch more and slice
+    const results = await collection.get({
+      limit: offset + limit,
+    });
+
+    // Formater les résultats
+    const formatted = [];
+    if (results.ids && results.ids.length > 0) {
+      // Skip les premiers 'offset' résultats
+      const startIdx = offset;
+      const endIdx = Math.min(offset + limit, results.ids.length);
+
+      for (let i = startIdx; i < endIdx; i++) {
+        formatted.push({
+          id: results.ids[i],
+          content: results.documents?.[i] || '',
+          metadata: results.metadatas?.[i] || {},
+        });
+      }
+    }
+
+    return formatted;
+  } catch (error: any) {
+    if (error.message.includes('does not exist')) {
+      throw new Error(`Collection "${sourceId}" does not exist`);
+    }
+    throw new Error(`Failed to get collection documents: ${error.message}`);
+  }
+}

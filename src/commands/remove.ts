@@ -3,8 +3,12 @@ import ora from 'ora';
 import fs from 'fs/promises';
 import path from 'path';
 import { removeSource, getSource } from '../config.js';
+import { ensureChromaRunning } from '../chroma/manager.js';
 
 export async function removeCommand(id: string) {
+  // Vérifier que ChromaDB est accessible
+  await ensureChromaRunning();
+
   const spinner = ora(`Removing source "${id}"...`).start();
 
   try {

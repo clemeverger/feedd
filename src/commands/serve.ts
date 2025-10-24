@@ -1,13 +1,22 @@
 import chalk from 'chalk';
-import { ensureChromaRunning } from '../chroma/manager.js';
+import { startChromaIfNeeded, stopChromaDB } from '../chroma/manager.js';
 
 interface ServeOptions {
   port?: string;
 }
 
 export async function serveCommand(options: ServeOptions) {
-  // Vérifier que ChromaDB est accessible
-  await ensureChromaRunning();
+  // Lancer ChromaDB automatiquement si nécessaire
+  await startChromaIfNeeded();
+
+  // Gérer l'arrêt propre de ChromaDB
+  const cleanup = () => {
+    stopChromaDB();
+    process.exit(0);
+  };
+
+  process.on('SIGINT', cleanup);
+  process.on('SIGTERM', cleanup);
 
   console.log(chalk.bold('\n🚀 Starting MCP Server\n'));
 
@@ -17,6 +26,7 @@ export async function serveCommand(options: ServeOptions) {
 
   } catch (error: any) {
     console.error(chalk.red('Error starting MCP server:'), error.message);
+    stopChromaDB();
     process.exit(1);
   }
 }

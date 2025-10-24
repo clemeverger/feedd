@@ -5,7 +5,17 @@ import { Command } from 'commander'
 
 const program = new Command()
 
-program.name('feedd').description('Local documentation crawler with RAG and MCP server for Claude Code').version('0.1.2')
+program.name('feedd').description('Local documentation crawler with RAG and MCP server for Claude Code').version('0.1.3')
+
+// Commande serve (en premier - lance ChromaDB automatiquement)
+program
+  .command('serve')
+  .description('Start the MCP server (starts ChromaDB automatically)')
+  .option('-p, --port <number>', 'Port to listen on', '3000')
+  .action(async (options) => {
+    const { serveCommand } = await import('./commands/serve.js')
+    await serveCommand(options)
+  })
 
 // Commande add
 program
@@ -50,14 +60,15 @@ program
     await updateCommand(id, options)
   })
 
-// Commande serve
+// Commande browse
 program
-  .command('serve')
-  .description('Start the MCP server')
-  .option('-p, --port <number>', 'Port to listen on', '3000')
-  .action(async (options) => {
-    const { serveCommand } = await import('./commands/serve.js')
-    await serveCommand(options)
+  .command('browse')
+  .description('Browse and inspect a ChromaDB collection')
+  .argument('<id>', 'Source ID to browse')
+  .option('-l, --limit <number>', 'Number of documents per page', '20')
+  .action(async (id, options) => {
+    const { browseCommand } = await import('./commands/browse.js')
+    await browseCommand(id, options)
   })
 
 // Error handling

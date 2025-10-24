@@ -9,7 +9,7 @@ A local documentation crawler with RAG (Retrieval-Augmented Generation) and MCP 
 Feedd is a CLI tool that:
 
 1. **Crawls** documentation websites and converts them to Markdown
-2. **Indexes** the content using local embeddings (Ollama)
+2. **Indexes** the content using local embeddings (ChromaDB)
 3. **Stores** vectors in a local ChromaDB database
 4. **Serves** an MCP server for Claude Code to query the docs
 
@@ -20,8 +20,7 @@ Your AI doesn't guess anymore — it consults the exact docs from your stack.
 ### Prerequisites
 
 1. **Node.js** 18+ and **pnpm**
-2. **Ollama** - Download from [ollama.ai](https://ollama.ai)
-3. **ChromaDB** - Install via pip
+2. **ChromaDB** - Install via pip: `pip install chromadb`
 
 ### Install Feedd
 
@@ -33,31 +32,7 @@ pnpm build
 pnpm link --global
 ```
 
-### Setup Required Services
-
-#### 1. Install and Start ChromaDB
-
-```bash
-# Install ChromaDB
-pip install chromadb
-
-# Start ChromaDB server (keep this terminal open)
-chroma run --path ./data/vectordb
-```
-
-**Important:** ChromaDB must be running before using Feedd commands. Keep it running in a separate terminal.
-
-#### 2. Setup Ollama
-
-After installing Ollama, start it and pull the embedding model:
-
-```bash
-# Start Ollama (run in a separate terminal)
-ollama serve
-
-# Pull the embedding model
-ollama pull nomic-embed-text
-```
+**Note:** ChromaDB will start automatically when you run `feedd serve` - no need to start it manually!
 
 ## 🚀 Quick Start
 
@@ -68,9 +43,8 @@ feedd add https://react.dev/reference
 ```
 
 This will:
-
 - Crawl the React documentation
-- Generate embeddings
+- Generate embeddings using ChromaDB's default embedding model
 - Store in local vector database
 
 ### 2. List your sources
@@ -79,11 +53,13 @@ This will:
 feedd list
 ```
 
-### 3. Start the MCP server
+### 3. Start the MCP server (with automatic ChromaDB startup)
 
 ```bash
 feedd serve
 ```
+
+ChromaDB will start automatically if not already running. Use `Ctrl+C` to stop both the MCP server and ChromaDB.
 
 ### 4. Configure Claude Code
 
@@ -226,11 +202,12 @@ feedd/
 │   │   ├── remove.ts
 │   │   ├── update.ts
 │   │   └── serve.ts
+│   ├── chroma/             # ChromaDB manager
+│   │   └── manager.ts      # Automatic startup/shutdown
 │   ├── crawler/            # Web crawler
 │   │   └── index.ts
 │   ├── indexer/            # RAG indexer
 │   │   ├── chunker.ts      # Markdown chunking
-│   │   ├── embedder.ts     # Ollama embeddings
 │   │   ├── vectordb.ts     # ChromaDB operations
 │   │   └── index.ts
 │   └── mcp/                # MCP server
@@ -260,10 +237,6 @@ The `feedd.config.json` file is automatically created in your project directory:
       "maxPages": 100
     }
   ],
-  "embedding": {
-    "model": "nomic-embed-text",
-    "provider": "ollama"
-  },
   "vectordb": {
     "type": "chromadb",
     "path": "./data/vectordb"
@@ -294,8 +267,7 @@ MIT
 ## 🙏 Credits
 
 - [Crawlee](https://crawlee.dev/) - Web scraping framework
-- [Ollama](https://ollama.ai) - Local LLM and embeddings
-- [ChromaDB](https://www.trychroma.com/) - Vector database
+- [ChromaDB](https://www.trychroma.com/) - Vector database with built-in embeddings
 - [MCP](https://modelcontextprotocol.io/) - Model Context Protocol
 
 ---
