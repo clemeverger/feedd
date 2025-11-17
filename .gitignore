@@ -11,10 +11,8 @@ data/vectordb/
 
 # Config (peut contenir des URLs privées)
 feedd.config.json
-
-# Crawlee
-storage/
-.crawlee/
+data/
+.claude/
 
 # Logs
 *.log
@@ -35,6 +33,3 @@ Thumbs.db
 *.swp
 *.swo
 *~
-
-# Chroma
-chroma/

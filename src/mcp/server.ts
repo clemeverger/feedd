@@ -5,8 +5,9 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { listSources, loadConfig } from '../config.js';
-import { searchInCollectionByText, listCollections } from '../indexer/vectordb.js';
+import { listSources } from '../config.js';
+import { OllamaEmbedder } from '../embeddings/ollama.js';
+import { search, listTables } from '../storage/lancedb.js';
 import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
@@ -19,7 +20,7 @@ export async function startMCPServer(options: ServeOptions) {
   const server = new Server(
     {
       name: 'feedd',
-      version: '0.1.0',
+      version: '0.2.0',
     },
     {
       capabilities: {
@@ -31,7 +32,7 @@ export async function startMCPServer(options: ServeOptions) {
   // Tool 1: list_sources
   const listSourcesTool: Tool = {
     name: 'list_sources',
-    description: 'List all indexed documentation sources available in Feedd. Use this automatically when the user asks about available documentation, what sources are indexed, which libraries/frameworks/tools are available for search, or wants to know what documentation has been added to the system.',
+    description: 'List all indexed GitHub repositories available in Feedd. Use this automatically when the user asks about available documentation, what repositories are indexed, which libraries/frameworks/tools are available for search, or wants to know what documentation has been added to the system.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -42,7 +43,7 @@ export async function startMCPServer(options: ServeOptions) {
   // Tool 2: search_docs
   const searchDocsTool: Tool = {
     name: 'search_docs',
-    description: 'Search documentation using vector similarity to find relevant information from indexed docs. Use this automatically whenever the user asks questions about programming concepts, API usage, library/framework features, syntax, best practices, code examples, error messages, or any technical question that could be answered by consulting documentation. This is your primary tool for retrieving accurate, up-to-date information from the indexed documentation sources.',
+    description: 'Search documentation using vector similarity to find relevant information from indexed GitHub repositories. Use this automatically whenever the user asks questions about programming concepts, API usage, library/framework features, syntax, best practices, code examples, error messages, or any technical question that could be answered by consulting documentation. This is your primary tool for retrieving accurate, up-to-date information from the indexed repositories.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -52,7 +53,7 @@ export async function startMCPServer(options: ServeOptions) {
         },
         source: {
           type: 'string',
-          description: 'Optional: filter by source ID (e.g., "react-dev-reference"). Use this when the user specifically mentions a framework, library, or tool name to search only within that documentation. Leave empty to search across all indexed sources.',
+          description: 'Optional: filter by source ID (e.g., "facebook-react-main"). Use this when the user specifically mentions a repository or branch to search only within that documentation. Leave empty to search across all indexed repositories.',
         },
         limit: {
           type: 'number',
@@ -66,25 +67,33 @@ export async function startMCPServer(options: ServeOptions) {
   // Tool 3: get_doc
   const getDocTool: Tool = {
     name: 'get_doc',
-    description: 'Retrieve the full Markdown content of a specific documentation page by its URL. Use this when the user needs complete documentation page content (not just snippets), when they reference a specific URL from search results and want more details, or when search_docs results indicate that a full page view would be helpful. The full page often contains additional context, examples, and related information not present in search chunks.',
+    description: 'Retrieve the full Markdown content of a specific documentation file by its path. Use this when the user needs complete documentation page content (not just snippets), when they reference a specific file path from search results and want more details, or when search_docs results indicate that a full page view would be helpful. The full page often contains additional context, examples, and related information not present in search chunks.',
     inputSchema: {
       type: 'object',
       properties: {
-        url: {
+        repo: {
           type: 'string',
-          description: 'The exact URL of the documentation page to retrieve (e.g., "https://react.dev/reference/react/useEffect"). This should typically come from the metadata of search_docs results.',
+          description: 'Repository name (e.g., "facebook/react")',
+        },
+        branch: {
+          type: 'string',
+          description: 'Branch name (e.g., "main", "v18.2.0")',
+        },
+        path: {
+          type: 'string',
+          description: 'Relative path to the markdown file (e.g., "docs/hooks-reference.md")',
         },
       },
-      required: ['url'],
+      required: ['repo', 'branch', 'path'],
     },
   };
 
-  // Handler pour list_tools
+  // Handler for list_tools
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [listSourcesTool, searchDocsTool, getDocTool],
   }));
 
-  // Handler pour call_tool
+  // Handler for call_tool
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
@@ -99,7 +108,8 @@ export async function startMCPServer(options: ServeOptions) {
                 text: JSON.stringify(
                   sources.map(s => ({
                     id: s.id,
-                    url: s.url,
+                    repo: `${s.owner}/${s.repo}`,
+                    branch: s.branch,
                     lastUpdated: s.lastUpdated,
                     docCount: s.docCount || 0,
                     status: s.status
@@ -119,27 +129,36 @@ export async function startMCPServer(options: ServeOptions) {
             throw new Error('Query parameter is required');
           }
 
+          // Generate query embedding
+          const embedder = new OllamaEmbedder();
+
+          // Check if Ollama is available
+          if (!await embedder.checkHealth()) {
+            throw new Error('Ollama is not available. Please start Ollama and ensure mxbai-embed-large model is installed.');
+          }
+
+          const [queryVector] = await embedder.embed([query]);
+
           let results: any[] = [];
 
           if (source) {
-            // Rechercher dans une source spécifique
-            // ChromaDB génère l'embedding automatiquement avec son modèle par défaut
-            results = await searchInCollectionByText(source, query, limit);
+            // Search in specific source
+            results = await search(source, queryVector, limit);
           } else {
-            // Rechercher dans toutes les sources
-            const collections = await listCollections();
+            // Search in all sources
+            const tables = await listTables();
 
-            for (const collectionName of collections) {
-              const collectionResults = await searchInCollectionByText(
-                collectionName,
-                query,
-                limit
-              );
-              results.push(...collectionResults);
+            for (const tableName of tables) {
+              try {
+                const tableResults = await search(tableName, queryVector, limit);
+                results.push(...tableResults);
+              } catch (error) {
+                // Silently skip tables that don't exist or have errors
+              }
             }
 
-            // Trier par distance et limiter
-            results.sort((a, b) => a.distance - b.distance);
+            // Sort by distance and limit
+            results.sort((a, b) => a._distance - b._distance);
             results = results.slice(0, limit);
           }
 
@@ -154,50 +173,47 @@ export async function startMCPServer(options: ServeOptions) {
         }
 
         case 'get_doc': {
-          const { url } = args as any;
+          const { repo, branch, path: filePath } = args as any;
 
-          if (!url) {
-            throw new Error('URL parameter is required');
+          if (!repo || !branch || !filePath) {
+            throw new Error('repo, branch, and path parameters are required');
           }
 
-          // Trouver le fichier correspondant à l'URL
-          const sources = await listSources();
-          let foundContent: string | null = null;
+          // Parse repo (owner/repo)
+          const [owner, repoName] = repo.split('/');
 
-          for (const source of sources) {
-            const rawDir = path.join(process.cwd(), 'data', 'raw', source.id);
+          if (!owner || !repoName) {
+            throw new Error('Invalid repo format. Expected "owner/repo"');
+          }
 
-            try {
-              const files = await getAllMarkdownFiles(rawDir);
+          // Build full path to markdown file
+          const fullPath = path.join(
+            process.cwd(),
+            'data',
+            'repos',
+            owner,
+            repoName,
+            branch,
+            filePath
+          );
 
-              for (const file of files) {
-                const content = await fs.readFile(file, 'utf-8');
+          try {
+            const content = await fs.readFile(fullPath, 'utf-8');
 
-                // Vérifier si ce fichier contient l'URL
-                if (content.includes(`url: ${url}`)) {
-                  foundContent = content;
-                  break;
-                }
-              }
-
-              if (foundContent) break;
-            } catch {
-              // Continuer si le dossier n'existe pas
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: content,
+                },
+              ],
+            };
+          } catch (error: any) {
+            if (error.code === 'ENOENT') {
+              throw new Error(`Document not found: ${repo}@${branch}:${filePath}`);
             }
+            throw error;
           }
-
-          if (!foundContent) {
-            throw new Error(`Document with URL "${url}" not found`);
-          }
-
-          return {
-            content: [
-              {
-                type: 'text',
-                text: foundContent,
-              },
-            ],
-          };
         }
 
         default:
@@ -216,7 +232,7 @@ export async function startMCPServer(options: ServeOptions) {
     }
   });
 
-  // Démarrer le serveur avec stdio transport
+  // Start server with stdio transport
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
@@ -225,38 +241,13 @@ export async function startMCPServer(options: ServeOptions) {
   console.error(chalk.dim('\nAvailable tools:'));
   console.error(chalk.dim('  - list_sources()'));
   console.error(chalk.dim('  - search_docs(query, source?, limit?)'));
-  console.error(chalk.dim('  - get_doc(url)'));
+  console.error(chalk.dim('  - get_doc(repo, branch, path)'));
 
-  // Instructions pour Claude Code
+  // Instructions for Claude Code
   console.error(chalk.bold('\n📋 Add to Claude Code:'));
   console.error(chalk.dim('\nRun this command to install the MCP server:\n'));
   console.error(chalk.cyan('  claude mcp add --transport stdio feedd -- feedd serve'));
   console.error(chalk.dim('\nOr for user-level (all projects):'));
   console.error(chalk.cyan('  claude mcp add --transport stdio --scope user feedd -- feedd serve'));
   console.error(chalk.dim('\nThen restart Claude Code and run /mcp to verify\n'));
-}
-
-async function getAllMarkdownFiles(dir: string): Promise<string[]> {
-  const files: string[] = [];
-
-  async function walk(currentPath: string) {
-    try {
-      const entries = await fs.readdir(currentPath, { withFileTypes: true });
-
-      for (const entry of entries) {
-        const fullPath = path.join(currentPath, entry.name);
-
-        if (entry.isDirectory()) {
-          await walk(fullPath);
-        } else if (entry.isFile() && entry.name.endsWith('.md')) {
-          files.push(fullPath);
-        }
-      }
-    } catch {
-      // Ignorer les erreurs
-    }
-  }
-
-  await walk(dir);
-  return files;
 }

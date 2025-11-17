@@ -1,7 +1,6 @@
-import fs from 'fs/promises';
-import path from 'path';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import { encoding_for_model } from 'tiktoken';
+import type { ParsedMarkdown } from '../markdown/parser.js';
 
 // Initialiser l'encodeur tiktoken pour compter les tokens
 const encoder = encoding_for_model('gpt-4');
@@ -18,7 +17,6 @@ export interface Chunk {
   content: string;
   metadata: {
     source_id: string;
-    url: string;
     title: string;
     h1?: string;
     h2?: string;
@@ -43,101 +41,58 @@ export function configureChunker(chunkSize: number, chunkOverlap: number): void 
 }
 
 // Initialisation par défaut
-configureChunker(1800, 270);
+configureChunker(800, 100);
 
-export async function chunkMarkdownFiles(sourceId: string, rawDir: string): Promise<Chunk[]> {
-  const chunks: Chunk[] = [];
+/**
+ * Chunk parsed markdown documents
+ * @param parsedDocs Array of parsed markdown documents
+ * @param sourceId Source identifier (repo ID)
+ * @returns Array of chunks with metadata
+ */
+export async function chunkParsedMarkdown(
+  parsedDocs: ParsedMarkdown[],
+  sourceId: string
+): Promise<Chunk[]> {
+  const allChunks: Chunk[] = [];
 
-  // Lire tous les fichiers .md
-  const files = await getAllMarkdownFiles(rawDir);
-
-  for (const file of files) {
-    const content = await fs.readFile(file, 'utf-8');
-    const fileChunks = await chunkMarkdownFile(content, file, sourceId);
-    chunks.push(...fileChunks);
+  for (const doc of parsedDocs) {
+    const docChunks = await chunkSingleDocument(doc, sourceId);
+    allChunks.push(...docChunks);
   }
 
-  return chunks;
+  return allChunks;
 }
 
-async function getAllMarkdownFiles(dir: string): Promise<string[]> {
-  const files: string[] = [];
+/**
+ * Chunk a single parsed markdown document
+ */
+async function chunkSingleDocument(
+  doc: ParsedMarkdown,
+  sourceId: string
+): Promise<Chunk[]> {
+  // Build header context
+  const headers = [doc.metadata.h1, doc.metadata.h2, doc.metadata.h3]
+    .filter(Boolean)
+    .join(' > ');
 
-  async function walk(currentPath: string) {
-    try {
-      const entries = await fs.readdir(currentPath, { withFileTypes: true });
+  // Prepare text with headers (for better context in chunks)
+  const textToChunk = headers ? `${headers}\n\n${doc.content}` : doc.content;
 
-      for (const entry of entries) {
-        const fullPath = path.join(currentPath, entry.name);
-
-        if (entry.isDirectory()) {
-          await walk(fullPath);
-        } else if (entry.isFile() && entry.name.endsWith('.md')) {
-          files.push(fullPath);
-        }
-      }
-    } catch (error) {
-      // Ignorer les erreurs de lecture (permissions, etc.)
-    }
-  }
-
-  await walk(dir);
-  return files;
-}
-
-async function chunkMarkdownFile(content: string, filePath: string, sourceId: string): Promise<Chunk[]> {
-  // Parser le frontmatter
-  const { frontmatter, markdown } = parseFrontmatter(content);
-
-  // Construire les headers pour le contexte
-  const headers = [frontmatter.h1, frontmatter.h2, frontmatter.h3].filter(Boolean).join(' > ');
-
-  // Préparer le texte avec headers (pour que LangChain en tienne compte)
-  const textToChunk = headers ? `${headers}\n\n${markdown}` : markdown;
-
-  // Utiliser LangChain pour chunker intelligemment
+  // Use LangChain to chunk intelligently
   const textChunks = await textSplitter.createDocuments([textToChunk]);
 
-  // Convertir en notre format de Chunk avec metadata
-  const chunks: Chunk[] = textChunks.map((doc) => ({
-    content: doc.pageContent,
+  // Convert to our Chunk format with metadata
+  const chunks: Chunk[] = textChunks.map((chunk) => ({
+    content: chunk.pageContent,
     metadata: {
       source_id: sourceId,
-      url: frontmatter.url || '',
-      title: frontmatter.title || '',
-      h1: frontmatter.h1,
-      h2: frontmatter.h2,
-      h3: frontmatter.h3,
-      file_path: filePath,
-    },
+      title: doc.metadata.title,
+      h1: doc.metadata.h1,
+      h2: doc.metadata.h2,
+      h3: doc.metadata.h3,
+      file_path: doc.relativePath
+    }
   }));
 
   return chunks;
-}
-
-function parseFrontmatter(content: string): { frontmatter: any; markdown: string } {
-  const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
-  const match = content.match(frontmatterRegex);
-
-  if (!match) {
-    return { frontmatter: {}, markdown: content };
-  }
-
-  const frontmatterText = match[1];
-  const markdown = match[2];
-
-  // Parser le YAML simple (key: value)
-  const frontmatter: any = {};
-  const lines = frontmatterText.split('\n');
-
-  for (const line of lines) {
-    const colonIndex = line.indexOf(':');
-    if (colonIndex > 0) {
-      const key = line.substring(0, colonIndex).trim();
-      const value = line.substring(colonIndex + 1).trim();
-      frontmatter[key] = value;
-    }
-  }
-
-  return { frontmatter, markdown };
 }

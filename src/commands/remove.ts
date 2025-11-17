@@ -3,50 +3,69 @@ import ora from 'ora';
 import fs from 'fs/promises';
 import path from 'path';
 import { removeSource, getSource } from '../config.js';
-import { ensureChromaRunning } from '../chroma/manager.js';
+import { deleteTable } from '../storage/lancedb.js';
+import { parseRepoSpec, generateRepoId } from '../git/index.js';
+import { updateClaudeMd } from '../utils/claudemd.js';
 
-export async function removeCommand(id: string) {
-  // Vérifier que ChromaDB est accessible
-  await ensureChromaRunning();
+interface RemoveOptions {
+  branch?: string;
+}
 
-  const spinner = ora(`Removing source "${id}"...`).start();
+export async function removeCommand(repoSpec: string, options: RemoveOptions) {
+  let owner: string;
+  let repo: string;
+  let branch: string | undefined;
 
   try {
-    // Vérifier que la source existe
-    const source = await getSource(id);
+    const parsed = parseRepoSpec(repoSpec);
+    owner = parsed.owner;
+    repo = parsed.repo;
+    branch = options.branch || parsed.branch;
+  } catch (error: any) {
+    console.error(chalk.red(`Error: ${error.message}`));
+    process.exit(1);
+  }
+
+  const repoId = generateRepoId(owner, repo, branch);
+  const spinner = ora(`Removing ${owner}/${repo}@${branch}...`).start();
+
+  try {
+    // Check if source exists
+    const source = await getSource(repoId);
     if (!source) {
-      spinner.fail(chalk.red(`Source "${id}" not found`));
-      console.log(chalk.dim('\nUse "feedd list" to see available sources.'));
+      spinner.fail(chalk.red(`Repository ${owner}/${repo}@${branch} is not indexed`));
+      console.log(chalk.dim('\nUse "feedd list" to see indexed repositories.'));
       process.exit(1);
     }
 
-    // Supprimer les fichiers crawlés
-    const rawPath = path.join(process.cwd(), 'data', 'raw', id);
+    // Delete cloned repository
+    const repoPath = path.join(process.cwd(), 'data', 'repos', owner, repo, branch);
     try {
-      await fs.rm(rawPath, { recursive: true, force: true });
-      spinner.text = `Removed data files for "${id}"...`;
+      await fs.rm(repoPath, { recursive: true, force: true });
+      spinner.text = `Deleted repository files...`;
     } catch (error) {
-      // Ignorer si le dossier n'existe pas
+      // Ignore if directory doesn't exist
     }
 
-    // Supprimer de la config
-    await removeSource(id);
+    // Remove from config
+    await removeSource(repoId);
 
-    // Supprimer de ChromaDB
+    // Delete from LanceDB
     try {
-      const { deleteCollection } = await import('../indexer/index.js');
-      await deleteCollection(id);
+      await deleteTable(repoId);
     } catch (error) {
-      // Ignorer si la collection n'existe pas
+      // Ignore if table doesn't exist
     }
 
-    spinner.succeed(chalk.green(`Successfully removed "${source.url}"`));
+    spinner.succeed(chalk.green(`Successfully removed ${owner}/${repo}@${branch}`));
 
-    console.log(chalk.dim(`\nSource ID: ${id}`));
-    console.log(chalk.dim('All associated data has been deleted.'));
+    // Update CLAUDE.md to remove the source
+    await updateClaudeMd();
+
+    console.log(chalk.dim('\nAll associated data has been deleted.'));
 
   } catch (error: any) {
-    spinner.fail(chalk.red('Error removing source'));
+    spinner.fail(chalk.red('Error removing repository'));
     console.error(chalk.red(error.message));
     process.exit(1);
   }

@@ -1,130 +1,77 @@
 import chalk from 'chalk';
 import ora from 'ora';
-import inquirer from 'inquirer';
-import { addSource as addSourceToConfig, updateSource } from '../config.js';
-import { ensureChromaRunning } from '../chroma/manager.js';
+import { parseRepoSpec } from '../git/index.js';
+import { addSource, updateSource } from '../config.js';
+import { indexRepo } from '../indexer/index.js';
+import { updateClaudeMd } from '../utils/claudemd.js';
 
 interface AddOptions {
-  depth?: string;
-  pages?: string;
+  branch?: string;
 }
 
-export async function addCommand(url: string, options: AddOptions) {
-  // Vérifier que ChromaDB est accessible
-  await ensureChromaRunning();
+export async function addCommand(repoSpec: string, options: AddOptions) {
+  console.log(chalk.bold('\n📚 Adding GitHub repository\n'));
 
-  console.log(chalk.bold('\n🕷️  Adding documentation source\n'));
+  // Parse repo specification
+  let owner: string;
+  let repo: string;
+  let branch: string;
 
-  // Valider l'URL
   try {
-    new URL(url);
-  } catch {
-    console.error(chalk.red('Error: Invalid URL provided'));
+    const parsed = parseRepoSpec(repoSpec);
+    owner = parsed.owner;
+    repo = parsed.repo;
+    branch = options.branch || parsed.branch;
+  } catch (error: any) {
+    console.error(chalk.red(`Error: ${error.message}`));
+    console.error(chalk.dim('\nExpected format: owner/repo or owner/repo@branch'));
+    console.error(chalk.dim('Examples:'));
+    console.error(chalk.cyan('  feedd add facebook/react'));
+    console.error(chalk.cyan('  feedd add facebook/react@v18.2.0'));
+    console.error(chalk.cyan('  feedd add vercel/next.js --branch canary'));
     process.exit(1);
   }
 
-  // Détecter si mode interactif nécessaire (aucune option fournie)
-  const isInteractive = !options.depth && !options.pages;
-
-  let finalOptions = options;
-
-  if (isInteractive) {
-    // Mode interactif avec inquirer
-    const answers = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'maxDepth',
-        message: 'Max crawl depth:',
-        default: '2',
-        validate: (input) => {
-          const num = parseInt(input);
-          return !isNaN(num) && num > 0 ? true : 'Please enter a valid positive number';
-        },
-      },
-      {
-        type: 'input',
-        name: 'maxPages',
-        message: 'Max pages to crawl:',
-        default: '100',
-        validate: (input) => {
-          const num = parseInt(input);
-          return !isNaN(num) && num > 0 ? true : 'Please enter a valid positive number';
-        },
-      },
-    ]);
-
-    // Construire les options finales depuis les réponses
-    finalOptions = {
-      depth: answers.maxDepth,
-      pages: answers.maxPages,
-    };
-  }
-
-  let spinner = ora('Adding source to config...').start();
+  let spinner = ora(`Adding ${owner}/${repo}@${branch} to config...`).start();
 
   try {
-    // Ajouter à la config
-    const source = await addSourceToConfig(url, {
-      maxDepth: finalOptions.depth ? parseInt(finalOptions.depth) : undefined,
-      maxPages: finalOptions.pages ? parseInt(finalOptions.pages) : undefined,
-    });
+    // Add to config
+    const source = await addSource(owner, repo, branch);
+    spinner.succeed(chalk.green(`Added ${owner}/${repo}@${branch}`));
 
-    spinner.succeed(chalk.green(`Added source: ${source.url}`));
-    console.log(chalk.dim(`  ID: ${source.id}`));
-    console.log(chalk.dim(`  URL: ${source.url}\n`));
+    // Index repository
+    spinner = ora('Indexing repository...').start();
+    spinner.stopAndPersist({ symbol: '' }); // Stop but keep visible
 
-    // Phase 1: Crawling
-    spinner = ora('Crawling documentation...').start();
-    await updateSource(source.id, { status: 'crawling' });
-
-    const { crawl } = await import('../crawler/index.js');
-    const docCount = await crawl(source);
-
-    spinner.succeed(chalk.green(`Crawled ${docCount} pages`));
-
-    // Phase 2: Indexing
-    spinner = ora('Indexing documentation...').start();
     await updateSource(source.id, { status: 'indexing' });
 
-    const { indexSource } = await import('../indexer/index.js');
-    const chunkCount = await indexSource(source);
+    // This will display its own progress
+    const chunkCount = await indexRepo(owner, repo, branch);
 
-    spinner.succeed(chalk.green(`Indexed ${chunkCount} chunks`));
-
-    // Marquer comme prêt
+    // Mark as ready
     await updateSource(source.id, {
       status: 'ready',
-      docCount,
+      docCount: chunkCount,
       lastUpdated: new Date().toISOString()
     });
 
-    console.log(chalk.bold.green('\n✓ Source successfully added and indexed!'));
-    console.log(chalk.dim('\nUse "feedd serve" to start the MCP server.'));
+    // Update CLAUDE.md with new source
+    await updateClaudeMd();
 
+    console.log(chalk.bold.green(`\n✅ Repository successfully indexed!`));
+    console.log(chalk.dim(`   ${owner}/${repo}@${branch} - ${chunkCount} chunks`));
+    console.log(chalk.dim('\n💡 Use "feedd serve" to start the MCP server for Claude Code'));
   } catch (error: any) {
-    spinner.fail(chalk.red('Error adding source'));
-    console.error(chalk.red(error.message));
+    if (spinner.isSpinning) {
+      spinner.fail(chalk.red('Error'));
+    }
 
-    // Mettre le statut en erreur si la source a été créée
-    try {
-      const { getSource } = await import('../config.js');
-      const source = await getSource(generateIdFromUrl(url));
-      if (source) {
-        await updateSource(source.id, { status: 'error' });
-      }
-    } catch {}
+    console.error(chalk.red(`\n✖ ${error.message}`));
+
+    if (error.message.includes('Ollama')) {
+      console.log(''); // Empty line for readability
+    }
 
     process.exit(1);
-  }
-}
-
-function generateIdFromUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const hostname = parsed.hostname.replace(/^www\./, '');
-    const pathPart = parsed.pathname.split('/').filter(Boolean)[0] || '';
-    return `${hostname.replace(/\./g, '-')}${pathPart ? '-' + pathPart : ''}`;
-  } catch {
-    return url.replace(/[^a-z0-9]/gi, '-').toLowerCase();
   }
 }
